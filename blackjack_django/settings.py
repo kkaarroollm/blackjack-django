@@ -40,9 +40,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'bj',
 ]
 
-ASGI_APPLICATION = 'blackjack_django.asgi.application'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -74,6 +74,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'blackjack_django.wsgi.application'
+ASGI_APPLICATION = 'blackjack_django.asgi.application'
 
 
 # Database
