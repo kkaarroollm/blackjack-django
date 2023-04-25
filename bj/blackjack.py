@@ -48,8 +48,31 @@ class Hand:
     def __init__(self):
         self.cards = []
 
-    def clear(self):
-        self.cards = []
+    def initial_cards(self, shoe):
+        self.cards.append(shoe.deal_card())
+        self.cards.append(shoe.deal_card())
+
+    def add_card(self, card):
+        self.cards.append(card)
+
+    def is_busted(self):
+        return self.get_value() > 21
+
+    def is_blackjack(self):
+        return len(self.cards) == 2 and self.get_value() == 21
+
+    def is_splitable(self):
+        return len(self.cards) == 2 and self.cards[0].rank == self.cards[1].rank
+
+    def split_hand(self, shoe):
+        if self.is_splitable():
+            split_hand = Hand()
+            split_hand.cards.append(self.cards.pop())
+            self.cards.append(shoe.deal_card())
+            split_hand.cards.append(shoe.deal_card())
+            return split_hand
+        else:
+            return None
 
     def get_value(self):
         value = 0
@@ -70,28 +93,27 @@ class Hand:
 class Player:
     def __init__(self, name):
         self.name = name
-        self.hand = Hand()
-        self.split_hand = None
+        self.hands = [Hand()]
+        self.chips = 0
 
-    def hit(self, card):
-        self.hand.cards.append(card)
+    def hit(self, hand_index, shoe):
+        self.hands[hand_index].cards.append(shoe.deal_card())
 
-    def cards(self):
-        return self.hand.cards
+    def get_hand(self, hand_index=0):
+        return self.hands[hand_index]
 
-    def split(self, shoe):
-        if len(self.hand.cards) == 2 and self.hand.cards[0].rank == self.hand.cards[1].rank:
-            # Create a new split hand and move the second card from the original hand to the split hand
-            self.split_hand = Hand()
-            self.split_hand.cards.append(self.hand.cards.pop())
-            # Deal a new card to each hand
-            self.hand.cards.append(shoe.deal_card())
-            self.split_hand.cards.append(shoe.deal_card())
-            return True
-        return False
+    def bet(self, chips):
+        if chips <= self.chips:
+            self.chips -= chips
+            return chips
+        else:
+            return None
 
-    def clear(self):
-        self.hand.clear()
+    def clear_hands(self):
+        self.hands = [Hand()]
+
+    def add_hand(self, hand):
+        self.hands.append(hand)
 
     def __str__(self):
         return self.name
@@ -102,16 +124,14 @@ class Dealer(Player):
         super().__init__(name)
 
     def should_hit(self):
-        if self.hand.get_value() < 17:
+        if self.hands[0].get_value() < 17:
             return True
-        elif self.hand.get_value() == 17:
-            for card in self.hand.cards:
+        elif self.hands[0].get_value() == 17:
+            for card in self.hands[0].cards:
                 if card.rank == "A":
-                    # if dealer has an ace as first card and the second card is less than 7, hit
-                    if self.hand.cards.index(card) == 0 and self.hand.cards[1].value <= 6:
+                    if self.hands[0].cards.index(card) == 0 and self.hands[0].cards[1].value <= 6:
                         return True
-                    # if dealer has an ace as second card and the first card is less than 7, hit
-                    elif self.hand.cards.index(card) == 1 and self.hand.cards[0].value <= 6:
+                    elif self.hands[0].cards.index(card) == 1 and self.hands[0].cards[0].value <= 6:
                         return True
                     else:
                         return False
@@ -120,100 +140,145 @@ class Dealer(Player):
             return False
 
 
-class Blackjack:
-    def __init__(self):
-        self.shoe = Shoe()
+class BlackjackGame:
+    def __init__(self, num_decks=2):
+        self.shoe = Shoe(num_decks)
         self.dealer = Dealer()
         self.players = []
 
-    def add_player(self, player):
+    def add_player(self, name):
+        player = Player(name)
+        player.chips = 500
         self.players.append(player)
 
-    def play_hand(self, player):
-        player.clear()
-        player.hit(self.shoe.deal_card())
-        player.hit(self.shoe.deal_card())
+    def deal_initial_cards(self):
+        for player in self.players:
+            player.get_hand().initial_cards(self.shoe)
+        self.dealer.get_hand().initial_cards(self.shoe)
 
-        self.dealer.hand.clear()
-        self.dealer.hand.cards.append(self.shoe.deal_card())
-        self.dealer.hand.cards.append(self.shoe.deal_card())
-        dealer_first_card = self.dealer.hand.cards[0]
-
-        print(f"Dealer: {dealer_first_card}, [hidden]")
-
-        hand = player.hand
-        print(f"{hand}: {hand.get_value()}")
-        if player.hand.get_value() == 21 and len(player.hand.cards) == 2 and any(
-                card.rank in ('J', 'Q', 'K') for card in player.hand.cards):
-            print("Natural blackjack!")
-            return
-
-        while True:
-            print(f"{hand}: {hand.get_value()}")
-            if len(hand.cards) == 2 and hand.cards[0].rank == hand.cards[1].rank:
-                action = input("Hit, stand, or split? ")
-                if action.lower() == "hit":
-                    hand.cards.append(self.shoe.deal_card())
-                    if hand.get_value() > 21:
-                        print("Bust!")
-                        break
-                elif action.lower() == "stand":
-                    break
-                elif action.lower() == "split":
-                    if player.split(self.shoe):
-                        for split_hand in [player.hand, player.split_hand]:
-                            print(f"Dealer: {dealer_first_card}, [hidden]")
-                            while True:
-                                print(f"{split_hand}: {split_hand.get_value()}")
-                                action = input("Hit or stand? ")
-                                if action.lower() == "hit":
-                                    split_hand.cards.append(self.shoe.deal_card())
-                                    if split_hand.get_value() > 21:
-                                        print("Bust!")
-                                        break
-                                else:
-                                    break
-                        if player.hand.get_value() > 21 and player.split_hand.get_value() > 21:
-                            print("Both hands bust! Dealer wins.")
-                        elif player.hand.get_value() > 21:
-                            print("First hand busts! Second hand wins.")
-                        elif player.split_hand.get_value() > 21:
-                            print("Second hand busts! First hand wins.")
-                        elif player.hand.get_value() > player.split_hand.get_value():
-                            print("First hand wins!")
-                        elif player.hand.get_value() < player.split_hand.get_value():
-                            print("Second hand wins!")
-                        else:
-                            print("It's a tie!")
-                        break
+    def play_player_hands(self):
+        for player in self.players:
+            for hand in player.hands:
+                while True:
+                    print(f"{player.name}'s hand: {hand} ({hand.get_value()})")
+                    if hand.is_splitable():
+                        action = input("Do you want to hit, stand, split, or double down? ")
                     else:
-                        print("Cannot split!")
-            else:
-                action = input("Hit or stand? ")
-                if action.lower() == "hit":
-                    hand.cards.append(self.shoe.deal_card())
-                    if hand.get_value() > 21:
-                        print("Bust!")
+                        action = input("Do you want to hit, stand, or double down? ")
+                    if action.lower() == "hit":
+                        hand.add_card(self.shoe.deal_card())
+                        if hand.is_busted():
+                            print(f"{player.name}'s hand: {hand} ({hand.get_value()})")
+                            print("Busted!")
+                            break
+                    elif action.lower() == "stand":
                         break
-                else:
-                    break
+                    elif action.lower() == "split":
 
+                        new_hand = hand.split_hand(self.shoe)
+                        player.add_hand(new_hand)
+                        print(f"{player.name}'s original hand: {hand}")
+                        print(f"{player.name}'s new hand: {new_hand}")
+                        self.play_player_hands()
+                        return
+                    elif action.lower() == "double":
+                        player.chips -= player.bet_amount
+                        player.bet_amount *= 2
+                        hand.add_card(self.shoe.deal_card())
+                        print(f"{player.name}'s hand: {hand} ({hand.get_value()})")
+                        break
+        print()
+
+    def play_dealer_hand(self):
+        dealer_hand = self.dealer.get_hand()
         while self.dealer.should_hit():
-            self.dealer.hit(self.shoe.deal_card())
-        print(f"Dealer: {self.dealer.hand}: {self.dealer.hand.get_value()}")
+            dealer_hand.cards.append(self.shoe.deal_card())
+            if dealer_hand.is_busted():
+                print(f"Dealer busts with {dealer_hand} ({dealer_hand.get_value()})")
+                break
+            elif dealer_hand.is_blackjack():
+                print(f"Dealer has blackjack with {dealer_hand} ({dealer_hand.get_value()})")
+                break
+        if not dealer_hand.is_busted() and not dealer_hand.is_blackjack():
+            print(f"Dealer stands with {dealer_hand} ({dealer_hand.get_value()})")
 
-        if player.hand.get_value() > 21:
-            print("Player busts! Dealer wins.")
-        elif self.dealer.hand.get_value() > 21:
-            print("Dealer busts! Player wins.")
-        elif player.hand.get_value() > self.dealer.hand.get_value():
-            print("Player wins!")
-        elif player.hand.get_value() < self.dealer.hand.get_value():
-            print("Dealer wins!")
-        else:
-            print("It's a tie!")
+    def determine_winners(self):
+        dealer_value = self.dealer.get_hand().get_value()
+        dealer_hand = self.dealer.get_hand()
+        print("Dealer's hand:", self.dealer.get_hand())
+        print("Dealer's hand value:", dealer_value)
+        for player in self.players:
+            for hand in player.hands:
+                player_value = hand.get_value()
+                if hand.is_blackjack() and not dealer_hand.is_blackjack():
+                    print(f"{player.name} wins with {hand} ({hand.get_value()}) = Blackjack!")
+                    player.chips += player.bet_amount * 2.5
+                elif not hand.is_blackjack() and dealer_hand.is_blackjack():
+                    print(f"Dealer has blackjack with {dealer_hand} ({dealer_hand.get_value()})")
+                    player.chips -= player.bet_amount
+                elif hand.is_blackjack() and dealer_hand.is_blackjack():
+                    print(f"{player.name} pushes with {hand} ({hand.get_value()})")
+                    player.chips += player.bet_amount
+                elif player_value > 21:
+                    print(f"{player.name} busts with {hand} ({player_value})")
+                elif dealer_value > 21:
+                    print(f"{player.name} wins with {hand} ({player_value})")
+                    player.chips += player.bet_amount * 2
+                elif player_value == dealer_value:
+                    print(f"{player.name} ties with {hand} ({player_value})")
+                    player.chips += player.bet_amount
+                elif player_value > dealer_value:
+                    print(f"{player.name} wins with {hand} ({player_value})")
+                    player.chips += player.bet_amount * 2
+                else:
+                    print(f"{player.name} loses with {hand} ({player_value})")
+        print()
+
+    def play_game(self):
+        print("Welcome to Blackjack!")
+        while True:
+            num_players = int(input("How many players? "))
+            if num_players <= 0:
+                print("Invalid number of players. Please enter a positive integer.")
+                continue
+            for i in range(num_players):
+                name = input(f"Enter player {i + 1}'s name: ")
+                self.add_player(name)
+            while True:
+
+                for player in self.players:
+                    while True:
+                        bet_amount = int(input(f"{player.name}, how many chips do you want to bet? "))
+                        if bet_amount > player.chips:
+                            print(f"You don't have enough chips. You have {player.chips} chips left.")
+                        else:
+                            player.bet_amount = bet_amount
+                            player.chips -= bet_amount
+                            print(player.chips)
+                            break
+                self.deal_initial_cards()
+                dealer_hand = self.dealer.get_hand()
+                print(f"Dealer's hand: {dealer_hand.cards[0]}, [hidden card]")
+                self.play_player_hands()
+                if all(player.get_hand().is_busted() for player in self.players):
+                    self.play_dealer_hand()
+                    pass
+                else:
+                    print(f"Dealer's hand: {dealer_hand}")
+                    self.play_dealer_hand()
+                    self.determine_winners()
+                for player in self.players:
+                    print(player.bet_amount)
+                    print(f"{player.name} has {player.chips} chips left.")
+                    player.clear_hands()
+                    self.dealer.clear_hands()
+                    player.bet_amount = 0
+                play_again = input("Do you want to play again? (y/n) ")
+                if play_again.lower() == "n":
+                    break
+            break
+        print("Thanks for playing!")
 
 
-k = Player(name='k')
-game = Blackjack()
-game.play_hand(k)
+game = BlackjackGame()
+game.play_game()
