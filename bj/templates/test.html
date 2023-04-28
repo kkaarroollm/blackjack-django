@@ -1,23 +1,172 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport"
-          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>test</title>
+    <meta charset="utf-8">
+    <title>Blackjack Game</title>
 </head>
 <body>
-    <h1>test</h1>
-<script>
-     let url = `ws://${window.location.host}/ws/socket-server/`
+    <h1>Blackjack Game</h1>
+    <div id="messages"></div>
+    <form id="join-form">
+        <label for="name-input">Name:</label>
+        <input type="text" id="name-input" name="name" required>
+        <label for="chips-input">Chips:</label>
+        <input type="number" id="chips-input" name="chips" required>
+        <button type="submit" name="join">Join Game</button>
+    </form>
+    <form id="deal-form" style="display:none">
+        <label for="bet-input">Bet:</label>
+        <input type="number" id="bet-input" name="bet" required>
+        <button type="submit">Deal</button>
+    </form>
+    <form id="hit-form" style="display:none">
+        <button type="submit">Hit</button>
+    </form>
+    <form id="stand-form" style="display:none">
+        <button type="submit">Stand</button>
+    </form>
+    <form id="split-form" style="display:none">
+        <button type="submit">Split</button>
+    </form>
+    <form id="double-form" style="display:none">
+        <button type="submit">Double Down</button>
+    </form>
+    <script>
+        const messagesDiv = document.querySelector('#messages');
+        const joinForm = document.querySelector('#join-form');
+        const nameInput = document.querySelector('#name-input');
+        const chipsInput = document.querySelector('#chips-input');
+        const dealForm = document.querySelector('#deal-form');
+        const betInput = document.querySelector('#bet-input');
+        const hitForm = document.querySelector('#hit-form');
+        const standForm = document.querySelector('#stand-form');
+        const splitForm = document.querySelector('#split-form');
+        const doubleForm = document.querySelector('#double-form');
 
-     const bjSocket = new WebSocket(url)
 
-     bjSocket.onmessage = function (e){
-         let data = JSON.parse(e.data)
-         console.log('Data:', data)
-     }
-</script>
+        let socket;
+        let currentHandIndex = 0;
+
+        function connect() {
+            socket = new WebSocket('ws://' + window.location.host + '/ws/blackjack/');
+            socket.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                console.log('data', message)
+                if (message.type === 'join') {
+                    showMessage(`Welcome, ${message.name}! You have ${message.chips} chips.`);
+                    console.log(currentHandIndex, 'test index lol')
+                    joinForm.style.display = 'none';
+                    dealForm.style.display = 'block';
+                } else if (message.type === 'error') {
+                    showError(message.message);
+                } else if (message.type === 'winner'){
+                    showMessage(message)
+                } else if (message.type === 'splitable') {
+                    splitForm.style.display = 'block';
+                } else if (message.type === 'reset') {
+                  dealForm.style.display = 'block';
+                  hitForm.style.display = 'none';
+                  standForm.style.display = 'none';
+                  splitForm.style.display = 'none';
+                  doubleForm.style.display = 'none';
+                } else if (message.type === 'hand_index') {
+                  currentHandIndex = message.hand_index;
+                  console.log(currentHandIndex, 'test index lol')
+                }
+            };
+            socket.onclose = function(event) {
+                showMessage('Connection closed.');
+                joinForm.style.display = 'block';
+                dealForm.style.display = 'none';
+                hitForm.style.display = 'none';
+                standForm.style.display = 'none';
+                splitForm.style.display = 'none';
+                doubleForm.style.display = 'none';
+            };
+        }
+
+        function showMessage(message) {
+          if (Array.isArray(message)) {
+            // If the message is an array, it contains hand information for multiple hands
+            message.forEach((hand) => {
+              const handIndex = hand.hand_index + 1; // Add 1 to the hand index to display it as 1-based index
+              messagesDiv.innerHTML += `<p>Hand ${handIndex}</p>`;
+              messagesDiv.innerHTML += `<p>Cards: ${hand.cards.join(', ')}</p>`;
+              messagesDiv.innerHTML += `<p>Value: ${hand.value}</p>`;
+              messagesDiv.innerHTML += `<p>Busted: ${hand.busted}</p>`;
+              messagesDiv.innerHTML += `<p>Blackjack: ${hand.blackjack}</p>`;
+              messagesDiv.innerHTML += '---';
+            });
+          } else {
+            // For other message types, display the message as usual
+            messagesDiv.innerHTML += `<p>${message}</p>`;
+          }
+        }
+
+        function showError(error) {
+            messagesDiv.innerHTML += `<p style="color: red">${error}</p>`;
+        }
+
+        joinForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            const name = nameInput.value;
+            const chips = parseInt(chipsInput.value);
+            socket.send(JSON.stringify({
+                type: 'join',
+                name: name,
+                chips: chips
+            }));
+        });
+
+        dealForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            const bet = parseInt(betInput.value);
+            socket.send(JSON.stringify({
+                type: 'deal',
+                bet: bet
+            }));
+            dealForm.style.display = 'none';
+            hitForm.style.display = 'block';
+            standForm.style.display = 'block';
+            doubleForm.style.display = 'block';
+            splitForm.style.display =' none';
+        });
+
+        hitForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            socket.send(JSON.stringify({
+                type: 'hit',
+                hand: currentHandIndex
+            }));
+            console.log(currentHandIndex)
+        });
+
+        standForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            socket.send(JSON.stringify({
+                type: 'stand',
+                hand: currentHandIndex
+            }));
+        });
+
+        splitForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            socket.send(JSON.stringify({
+                type: 'split',
+                hand: currentHandIndex
+            }));
+        });
+
+        doubleForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            socket.send(JSON.stringify({
+                type: 'double',
+                hand: currentHandIndex
+            }));
+        });
+
+        connect();
+    </script>
 </body>
 </html>
+
