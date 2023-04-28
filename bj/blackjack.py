@@ -280,5 +280,4 @@ class BlackjackGame:
         print("Thanks for playing!")
 
 
-game = BlackjackGame()
-game.play_game()
+
