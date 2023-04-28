@@ -6,6 +6,7 @@
 </head>
 <body>
     <h1>Blackjack Game</h1>
+    <div id="cards"></div>
     <div id="messages"></div>
     <form id="join-form">
         <label for="name-input">Name:</label>
@@ -32,6 +33,7 @@
         <button type="submit">Double Down</button>
     </form>
     <script>
+        const cards = document.querySelector('#cards');
         const messagesDiv = document.querySelector('#messages');
         const joinForm = document.querySelector('#join-form');
         const nameInput = document.querySelector('#name-input');
@@ -59,8 +61,10 @@
                     dealForm.style.display = 'block';
                 } else if (message.type === 'error') {
                     showError(message.message);
-                } else if (message.type === 'winner'){
-                    showMessage(message)
+                } else if (message.type === 'winner') {
+                    const winnerMessage = message.message;
+                    showMessage(winnerMessage);
+                    console.log(winnerMessage);
                 } else if (message.type === 'splitable') {
                     splitForm.style.display = 'block';
                 } else if (message.type === 'reset') {
@@ -72,9 +76,11 @@
                 } else if (message.type === 'hand_index') {
                   currentHandIndex = message.hand_index;
                   console.log(currentHandIndex, 'test index lol')
+                } else if (message.type === 'cards') {
+                    showCards(message)
                 }
             };
-            socket.onclose = function(event) {
+            socket.onclose = function() {
                 showMessage('Connection closed.');
                 joinForm.style.display = 'block';
                 dealForm.style.display = 'none';
@@ -85,22 +91,21 @@
             };
         }
 
+        function showCards(message) {
+            messagesDiv.innerHTML += "<p>Player cards:</p>";
+
+            for (let i = 0; i < message.player_cards.length; i++) {
+                const handCards = message.player_cards[i];
+                const handCardsString = handCards.join(', ');
+                messagesDiv.innerHTML += `<p>Hand ${i+1} cards: ${handCardsString}</p>`;
+            }
+
+            messagesDiv.innerHTML += `<p>Dealer cards: ${message.dealer_card}, HIDDEN</p>`;
+        }
+
+
         function showMessage(message) {
-          if (Array.isArray(message)) {
-            // If the message is an array, it contains hand information for multiple hands
-            message.forEach((hand) => {
-              const handIndex = hand.hand_index + 1; // Add 1 to the hand index to display it as 1-based index
-              messagesDiv.innerHTML += `<p>Hand ${handIndex}</p>`;
-              messagesDiv.innerHTML += `<p>Cards: ${hand.cards.join(', ')}</p>`;
-              messagesDiv.innerHTML += `<p>Value: ${hand.value}</p>`;
-              messagesDiv.innerHTML += `<p>Busted: ${hand.busted}</p>`;
-              messagesDiv.innerHTML += `<p>Blackjack: ${hand.blackjack}</p>`;
-              messagesDiv.innerHTML += '---';
-            });
-          } else {
-            // For other message types, display the message as usual
             messagesDiv.innerHTML += `<p>${message}</p>`;
-          }
         }
 
         function showError(error) {

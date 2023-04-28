@@ -1,4 +1,6 @@
 import json
+import traceback
+
 from channels.generic.websocket import AsyncWebsocketConsumer
 from blackjack_django.asgi import Shoe, Player, Dealer
 
@@ -25,37 +27,41 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
     async def play_round(self, hand_index):
         if self.player.hands[hand_index].is_blackjack() and hand_index + 1 == len(self.player.hands):
             await self.send_game_state()
+            await self.send_cards()
             await self.determine_winner()
             await self.end_game()
             await self.reset_game()
+            return
         elif self.player.hands[hand_index].is_blackjack() and hand_index + 1 < len(self.player.hands):
             await self.send(json.dumps({"type": "hand_index", "hand_index": hand_index + 1}))
+            await self.send_cards()
 
-        else:
-            await self.send_message('ro sie robi')
-
-        if self.player.hands[0].is_splitable():
+        elif self.player.hands[0].is_splitable():
             await self.send(json.dumps({
                 "type": "splitable",
             }))
-
+        await self.send_cards()
         await self.send_game_state()
 
     async def play_hand(self, hand_index):
         await self.send_message(f'hand in hit: {hand_index}')
+        if hand_index >= len(self.player.hands):
+            await self.send_error("Invalid hand index")
+            return
+
         hand = self.player.hands[hand_index]
         if hand.is_busted():
             await self.send_error("This hand is already busted")
         else:
             await self.send_message(f'this is {hand_index} hand')
             self.player.hit(hand_index, self.shoe)
-            if hand.is_busted() and hand_index + 1 < len(self.player.hands):
+            await self.send_cards()
+            if hand.is_busted() and hand_index + 1 != len(self.player.hands):
                 await self.send_game_state()
                 await self.send(json.dumps({"type": "hand_index", "hand_index": hand_index + 1}))
-                return
             elif hand.is_busted() and hand_index + 1 == len(self.player.hands):
+                await self.send_message(f'busteddddddd {hand_index}')
                 await self.determine_winner()
-                await self.send_game_state()
                 await self.end_game()
                 await self.reset_game()
 
@@ -74,6 +80,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             self.player.chips -= self.bet
             self.bet *= 2
             self.player.hit(hand_index, self.shoe)
+            await self.send_cards()
             await self.send_game_state()
             if hand.is_busted():
                 await self.determine_winner()
@@ -111,17 +118,14 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                 if self.player.bet(self.bet) is None:
                     await self.send_error("You don't have enough chips")
                 else:
-                    self.player.clear_hands()
                     self.player.hands[0].initial_cards(self.shoe)
-                    self.dealer.clear_hands()
                     self.dealer.hands[0].initial_cards(self.shoe)
+                    await self.send_message(str(self.dealer.get_hand()))
                     await self.play_round(hand_index=hand_index)
-                    await self.send(json.dumps({"type": "hand_index", "hand_index": 0}))
 
             elif action_type == "hit":
                 hand_index = message.get("hand", 0)
                 await self.play_hand(hand_index)
-                await self.send_message(f'This is hand no {hand_index}')
 
             elif action_type == "stand":
                 hand_index = message.get("hand", 0)
@@ -140,6 +144,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                 else:
                     await self.split_hand(hand_index)
                     await self.play_round(hand_index=hand_index)
+                    await self.send_cards()
 
             elif action_type == "double":
                 hand_index = message.get("hand", 0)
@@ -152,7 +157,10 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Invalid action type")
 
         except Exception as e:
-            await self.send_error(str(e))
+            error_message = str(e)
+            traceback_info = traceback.format_exc()
+            await self.send_error(error_message)
+            await self.send_message(f"Error details:\n{traceback_info}")
 
     async def send_error(self, error_message):
         await self.send(json.dumps({
@@ -252,13 +260,24 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                     "message": f"{self.player.name} loses with {hand} ({player_value})"
                 }))
 
+    async def send_cards(self):
+        card_data = {
+            "type": "cards",
+            "player_cards": [],
+            "dealer_card": str(self.dealer.getFirstCard())
+        }
+        for hand in self.player.hands:
+            hand_cards = [str(card) for card in hand.cards]
+            card_data["player_cards"].append(hand_cards)
+        await self.send(json.dumps(card_data))
+
     async def reset_game(self):
         self.player = self.player
         self.dealer = Dealer()
-        self.shoe = Shoe(num_decks=2)
-        await self.send(json.dumps({
-            "type": "reset"
-        }))
+        self.player.clear_hands()
+        self.dealer.clear_hands()
+        await self.send(json.dumps({"type": "reset"}))
+        await self.send(json.dumps({"type": "hand_index", "hand_index": 0}))
 
     async def end_game(self):
         await self.send(json.dumps({
