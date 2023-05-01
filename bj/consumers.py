@@ -6,23 +6,35 @@ from blackjack_django.asgi import Shoe, Player, Dealer
 
 
 class BlackjackGameConsumer(AsyncWebsocketConsumer):
+    room_shoes = {}
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.player = None
         self.dealer = Dealer()
-        self.shoe = Shoe(num_decks=2)
+        self.shoe = None
         self.bet = None
 
     async def connect(self):
-        await self.channel_layer.group_add("blackjack", self.channel_name)
+        self.room_name = self.scope['url_route']['kwargs']['room_name']
+        self.room_group_name = 'blackjack_%s' % self.room_name
+
+        if self.room_name not in self.room_shoes:
+            self.room_shoes[self.room_name] = Shoe(num_decks=2)
+
+        self.shoe = self.room_shoes[self.room_name]
+
+        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
+
         await self.send(text_data=json.dumps({
             'type': 'connection_good',
-            'message': 'you re now connected'
+            'message': 'You are now connected to room %s' % self.room_name,
+            'channel_name': self.channel_name,
+            'cards_remaining': self.shoe.cards_remaining()
         }))
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard("blackjack", self.channel_name)
+        await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def play_round(self, hand_index):
         if self.player.hands[hand_index].is_blackjack() and hand_index + 1 == len(self.player.hands):
@@ -44,7 +56,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
         await self.send_game_state()
 
     async def play_hand(self, hand_index):
-        await self.send_message(f'hand in hit: {hand_index}')
+        await self.send_message(f'Hand in hit: {hand_index}')
         if hand_index >= len(self.player.hands):
             await self.send_error("Invalid hand index")
             return
@@ -53,17 +65,18 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
         if hand.is_busted():
             await self.send_error("This hand is already busted")
         else:
-            await self.send_message(f'this is {hand_index} hand')
+            await self.send_message(f'This is hand {hand_index}')
             self.player.hit(hand_index, self.shoe)
             await self.send_cards()
             if hand.is_busted() and hand_index + 1 != len(self.player.hands):
                 await self.send_game_state()
                 await self.send(json.dumps({"type": "hand_index", "hand_index": hand_index + 1}))
             elif hand.is_busted() and hand_index + 1 == len(self.player.hands):
-                await self.send_message(f'busteddddddd {hand_index}')
+                await self.send_message(f'Busted! Hand index: {hand_index}')
                 await self.determine_winner()
                 await self.end_game()
                 await self.reset_game()
+
 
     async def play_dealer_turn(self):
         while self.dealer.should_hit():
@@ -103,14 +116,28 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             action_type = message["type"]
 
             if action_type == "join":
+                if self.player is not None:
+                    # Player is already registered, ignore the join request
+                    return
+
                 player_name = message["name"]
-                self.player = Player(player_name)
-                self.player.chips = message["chips"]
+                player_chips = message["chips"]
+                self.player = Player(player_name)  # Create a new Player instance
+                self.player.chips = player_chips
+
                 await self.send(json.dumps({
                     "type": "join",
                     "name": player_name,
-                    "chips": self.player.chips
+                    "chips": player_chips
                 }))
+
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'player_join',
+                        'player_name': player_name
+                    }
+                )
 
             elif action_type == "deal":
                 self.bet = message["bet"]
@@ -162,6 +189,14 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             await self.send_error(error_message)
             await self.send_message(f"Error details:\n{traceback_info}")
 
+    async def player_join(self, event):
+        player_name = event['player_name']
+        # Broadcast the player join event to all clients in the room
+        await self.send(text_data=json.dumps({
+            'type': 'player_join',
+            'player_name': player_name
+        }))
+
     async def send_error(self, error_message):
         await self.send(json.dumps({
             "type": "error",
@@ -196,6 +231,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
 
         if self.shoe.cards_remaining() < 30:
             self.shoe = Shoe(num_decks=2)
+
 
     async def determine_winner(self):
         dealer_hand = self.dealer.get_hand()
@@ -263,36 +299,83 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
     async def send_cards(self):
         card_data = {
             "type": "cards",
+            "player_name": self.player.name,
             "player_cards": [],
             "dealer_card": str(self.dealer.getFirstCard())
         }
         for hand in self.player.hands:
             hand_cards = [str(card) for card in hand.cards]
             card_data["player_cards"].append(hand_cards)
-        await self.send(json.dumps(card_data))
+
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'cards_message',
+                'message': json.dumps(card_data)
+            }
+        )
+
+    async def cards_message(self, event):
+        # Send the card data to the client that triggered the event
+        await self.send(text_data=event['message'])
 
     async def reset_game(self):
         self.player = self.player
         self.dealer = Dealer()
         self.player.clear_hands()
         self.dealer.clear_hands()
-        await self.send(json.dumps({"type": "reset"}))
+        print(self.shoe)
+
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'reset_message'
+            }
+        )
         await self.send(json.dumps({"type": "hand_index", "hand_index": 0}))
 
+    async def reset_message(self, event):
+        # Send the reset message to the client that triggered the event
+        await self.send(json.dumps({"type": "reset"}))
+
     async def end_game(self):
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'end_game_message',
+                'dealer_cards': [str(card) for card in self.dealer.hands[0].cards],
+                'dealer_value': self.dealer.hands[0].get_value(),
+                'dealer_busted': self.dealer.hands[0].is_busted(),
+                'dealer_blackjack': self.dealer.hands[0].is_blackjack(),
+                'player_chips': self.player.chips
+            }
+        )
+
+    async def end_game_message(self, event):
+        # Send the end game message to the client that triggered the event
         await self.send(json.dumps({
             "type": "end_game",
-            "dealer_cards": [str(card) for card in self.dealer.hands[0].cards],
-            "dealer_value": self.dealer.hands[0].get_value(),
-            "dealer_busted": self.dealer.hands[0].is_busted(),
-            "dealer_blackjack": self.dealer.hands[0].is_blackjack(),
-            "player_chips": self.player.chips
+            "dealer_cards": event['dealer_cards'],
+            "dealer_value": event['dealer_value'],
+            "dealer_busted": event['dealer_busted'],
+            "dealer_blackjack": event['dealer_blackjack'],
+            "player_chips": event['player_chips']
         }))
 
     async def send_message(self, message):
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'message',
+                'message': message
+            }
+        )
+
+    async def message(self, event):
+        # Send the message to the client that triggered the event
         await self.send(json.dumps({
             "type": "message",
-            "message": message
+            "message": event['message']
         }))
 
     async def send_all(self, message):
