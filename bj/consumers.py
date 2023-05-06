@@ -15,6 +15,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
     timer_task = {}
     room_players = {}
     room_finished_hands = {}
+    dealer_hand = {}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -87,18 +88,23 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             elif action_type == "deal":
                 self.room_finished_hands[self.room_name] = set()
 
-                # if self.dealer_cards is None:
-                #     self.dealer.hands[0].initial_cards(self.shoe)
-                #     self.dealer_cards = str(self.dealer.get_hand())  # Generate dealer's initial cards for the round
-
-                # await self.send_message(self.dealer_cards)
-
                 if self.room_name not in self.timer_task or not self.timer_task[self.room_name]:
                     time_limit = 10
                     self.timer_task[self.room_name] = asyncio.create_task(asyncio.sleep(time_limit))
 
                 await self.timer_task[self.room_name]
-
+                if self.room_name not in self.dealer_hand or not self.dealer_hand[self.room_name]:
+                    self.dealer.hands[0].initial_cards(self.shoe)
+                    self.dealer_hand[self.room_name] = self.dealer
+                    print('-' * 20)
+                    print(self.dealer.get_hand())
+                    print('-' * 20)
+                else:
+                    self.dealer = self.dealer_hand[self.room_name]
+                    print('hits here')
+                    print('-' * 20)
+                    print(self.dealer.get_hand())
+                    print('-' * 20)
                 await self.execute_deal(message)
 
             elif action_type == "hit" or action_type == "stand" or action_type == "split" or action_type == "double":
@@ -203,7 +209,6 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             if len(self.room_finished_hands[self.room_name]) == sum(
                     len(player.hands) for player in self.room_players[self.room_name]):
                 for player in self.room_players[self.room_name]:
-                    print(player.hands)
                     await self.determine_winner(player)
                 await self.end_game()
                 await self.reset_game()
@@ -224,7 +229,6 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
 
         await self.send_game_state()
         for player in self.room_players[self.room_name]:
-            print(player.hands)
             await self.determine_winner(player)
         await self.end_game()
         await self.reset_game()
@@ -354,6 +358,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             "player_cards": [],
             "dealer_card": str(self.dealer.getFirstCard())
         }
+
         for hand in self.player.hands:
             hand_cards = [str(card) for card in hand.cards]
             card_data["player_cards"].append(hand_cards)
