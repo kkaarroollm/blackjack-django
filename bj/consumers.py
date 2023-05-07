@@ -93,7 +93,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                     self.timer_task[self.room_name] = asyncio.create_task(asyncio.sleep(time_limit))
 
                 await self.timer_task[self.room_name]
-                if self.room_name not in self.dealer_hand or not self.dealer_hand[self.room_name]:
+                if self.room_name not in self.dealer_hand or self.dealer_hand[self.room_name].hands[0].get_value() == 0:
                     self.dealer.hands[0].initial_cards(self.shoe)
                     self.dealer_hand[self.room_name] = self.dealer
                     print('-' * 20)
@@ -168,6 +168,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             await self.send_error("You don't have enough chips")
         else:
             self.player.hands[0].initial_cards(self.shoe)
+            print(f'{self.player.name} has cards:{self.player.hands[0]}')
             await self.play_round(hand_index=hand_index)
 
     async def send_error(self, error_message):
@@ -181,13 +182,13 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             await self.send_game_state()
             await self.send_cards()
             await self.end_game()
-            await self.reset_game()
+            # await self.reset_game()
             return
         elif self.player.hands[hand_index].is_blackjack() and hand_index + 1 < len(self.player.hands):
             await self.send(json.dumps({"type": "hand_index", "hand_index": hand_index + 1}))
             await self.send_cards()
 
-        elif self.player.hands[0].is_splitable():
+        elif self.player.hands[hand_index].is_splitable():
             await self.send(json.dumps({
                 "type": "splitable",
             }))
@@ -208,8 +209,8 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
 
             if len(self.room_finished_hands[self.room_name]) == sum(
                     len(player.hands) for player in self.room_players[self.room_name]):
-                for player in self.room_players[self.room_name]:
-                    await self.determine_winner(player)
+
+                await self.determine_winner()
                 await self.end_game()
                 await self.reset_game()
             else:
@@ -228,8 +229,11 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             self.dealer.hit(0, self.shoe)
 
         await self.send_game_state()
-        for player in self.room_players[self.room_name]:
-            await self.determine_winner(player)
+        print('room')
+        print(self.room_name)
+        print('---')
+        self.timer_task[self.room_name] = {}
+        await self.determine_winner()
         await self.end_game()
         await self.reset_game()
 
@@ -243,7 +247,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
             await self.send_game_state()
             if hand.is_busted():
                 await self.end_game()
-                await self.reset_game()
+                # await self.reset_game()
             else:
                 await self.play_dealer_turn()
         else:
@@ -254,6 +258,7 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
         if hand.is_splitable():
             new_hand = hand.split_hand(self.shoe)
             self.player.add_hand(new_hand)
+            print(f'new hand: {new_hand} and hand: {hand}')
 
     async def send_game_state(self):
         player_hands = []
@@ -284,51 +289,50 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
         if self.shoe.cards_remaining() < 30:
             self.shoe = Shoe(num_decks=2)
 
-    async def determine_winner(self, player):
+    async def determine_winner(self):
         dealer_hand = self.dealer.get_hand()
         dealer_value = dealer_hand.get_value()
-        print(player.hands)
+        for player in self.room_players[self.room_name]:
+            for hand in player.hands:
+                player_value = hand.get_value()
+                bet = self.bet
 
-        for hand in player.hands:
-            player_value = hand.get_value()
-            bet = self.bet
+                if hand.is_blackjack() and not dealer_hand.is_blackjack():
+                    # Player wins with blackjack
+                    player.chips += bet * 2.5
+                    message = f"{player.name} wins with {hand} ({player_value}) = Blackjack!"
+                elif not hand.is_blackjack() and dealer_hand.is_blackjack():
+                    # Dealer wins with blackjack
+                    player.chips -= bet
+                    message = f"Dealer has blackjack with {dealer_hand} ({dealer_value})"
+                elif hand.is_blackjack() and dealer_hand.is_blackjack():
+                    # Tie with both having blackjack
+                    player.chips += bet
+                    message = f"{player.name} pushes with {hand} ({player_value})"
+                elif player_value > 21:
+                    # Player busts
+                    message = f"{player.name} busts with {hand} ({player_value})"
+                elif dealer_value > 21:
+                    # Dealer busts, player wins
+                    player.chips += bet * 2
+                    message = f"{player.name} wins with {hand} ({player_value})"
+                elif player_value == dealer_value:
+                    # Tie with equal values
+                    player.chips += bet
+                    message = f"{player.name} ties with {hand} ({player_value})"
+                elif player_value > dealer_value:
+                    # Player wins with higher value
+                    player.chips += bet * 2
+                    message = f"{player.name} wins with {hand} ({player_value})"
+                else:
+                    # Player loses
+                    message = f"{player.name} loses with {hand} ({player_value})"
 
-            if hand.is_blackjack() and not dealer_hand.is_blackjack():
-                # Player wins with blackjack
-                player.chips += bet * 2.5
-                message = f"{player.name} wins with {hand} ({player_value}) = Blackjack!"
-            elif not hand.is_blackjack() and dealer_hand.is_blackjack():
-                # Dealer wins with blackjack
-                player.chips -= bet
-                message = f"Dealer has blackjack with {dealer_hand} ({dealer_value})"
-            elif hand.is_blackjack() and dealer_hand.is_blackjack():
-                # Tie with both having blackjack
-                player.chips += bet
-                message = f"{player.name} pushes with {hand} ({player_value})"
-            elif player_value > 21:
-                # Player busts
-                message = f"{player.name} busts with {hand} ({player_value})"
-            elif dealer_value > 21:
-                # Dealer busts, player wins
-                player.chips += bet * 2
-                message = f"{player.name} wins with {hand} ({player_value})"
-            elif player_value == dealer_value:
-                # Tie with equal values
-                player.chips += bet
-                message = f"{player.name} ties with {hand} ({player_value})"
-            elif player_value > dealer_value:
-                # Player wins with higher value
-                player.chips += bet * 2
-                message = f"{player.name} wins with {hand} ({player_value})"
-            else:
-                # Player loses
-                message = f"{player.name} loses with {hand} ({player_value})"
+                print('-' * 20)
+                print(player.channel)
+                print('-' * 20)
 
-            print('-' * 20)
-            print(player.channel)
-            print('-' * 20)
-
-            await self.send_message_to_channel(player.channel, message)
+                await self.send_message_to_channel(player.channel, message)
 
     async def send_message_to_channel(self, channel, message):
         winner = {
@@ -375,19 +379,18 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=event['message'])
 
     async def reset_game(self):
-        self.player = self.player
-        self.dealer = Dealer()
-        self.player.clear_hands()
-        self.dealer.clear_hands()
-        print(self.shoe)
-
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'reset_message'
-            }
-        )
-        await self.send(json.dumps({"type": "hand_index", "hand_index": 0}))
+        self.dealer_hand[self.room_name].clear_hands()
+        for player in self.room_players[self.room_name]:
+            self.player = player
+            self.player.clear_hands()
+            print(self.shoe)
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'reset_message'
+                }
+            )
+            await self.send(json.dumps({"type": "hand_index", "hand_index": 0}))
 
     async def reset_message(self, event):
         await self.send(json.dumps({"type": "reset"}))
