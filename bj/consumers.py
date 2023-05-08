@@ -86,6 +86,8 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                     }
                 )
             elif action_type == "deal":
+                print('players deal')
+                print(self.player)
                 self.room_finished_hands[self.room_name] = set()
 
                 if self.room_name not in self.timer_task or not self.timer_task[self.room_name]:
@@ -116,6 +118,8 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                 if action_type == "hit":
                     hand_index = message.get("hand", 0)
                     await self.play_hand(hand_index)
+
+
 
                 elif action_type == "stand":
                     hand_index = message.get("hand", 0)
@@ -200,12 +204,14 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
         if hand_index >= len(self.player.hands):
             await self.send_error("Invalid hand index")
             return
-
+        await self.send_message(f'This is hand {hand_index}')
+        self.player.hit(hand_index, self.shoe)
         hand = self.player.hands[hand_index]
         if hand.is_busted():
             await self.send_error("This hand is already busted")
             self.room_finished_hands[self.room_name] = self.room_finished_hands.get(self.room_name, set())
             self.room_finished_hands[self.room_name].add(hand)
+            print('hits busted')
 
             if len(self.room_finished_hands[self.room_name]) == sum(
                     len(player.hands) for player in self.room_players[self.room_name]):
@@ -215,14 +221,11 @@ class BlackjackGameConsumer(AsyncWebsocketConsumer):
                 await self.reset_game()
             else:
                 await self.send(json.dumps({"type": "wait_for_players"}))
-        else:
-            await self.send_message(f'This is hand {hand_index}')
-            self.player.hit(hand_index, self.shoe)
-            await self.send_cards()
+        await self.send_cards()
 
-            if hand_index + 1 != len(self.player.hands):
-                await self.send_game_state()
-                await self.send(json.dumps({"type": "hand_index", "hand_index": hand_index + 1}))
+        if hand_index + 1 != len(self.player.hands):
+            await self.send_game_state()
+            await self.send(json.dumps({"type": "hand_index", "hand_index": hand_index + 1}))
 
     async def play_dealer_turn(self):
         while self.dealer.should_hit():
